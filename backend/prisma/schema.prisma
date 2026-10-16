@@ -1,0 +1,398 @@
+// AtoZ E-Commerce Enterprise Database Schema
+// Optimized for 20,000+ Products, High-Concurrency Checkout, and Mobile/Web REST API
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. ENUMS (حالات وبيانات النظام الثابتة)
+// ==========================================
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  MANAGER
+  SUPPORT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+  OUT_OF_STOCK
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+  MANUAL
+}
+
+enum PaymentTransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum ReservationStatus {
+  RESERVED
+  COMMITTED
+  RELEASED
+}
+
+// ==========================================
+// 2. USER & AUTHENTICATION (المستخدمون والتوثيق)
+// ==========================================
+
+model User {
+  id               String       @id @default(uuid())
+  email            String       @unique
+  passwordHash     String
+  firstName        String?
+  lastName         String?
+  phone            String?
+  avatarUrl        String?
+  role             Role         @default(CUSTOMER)
+  status           UserStatus   @default(ACTIVE)
+  isEmailVerified  Boolean      @default(false)
+  emailVerifiedAt  DateTime?
+
+  addresses        Address[]
+  refreshTokens    RefreshToken[]
+  orders           Order[]
+  cart             Cart?
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([email])
+  @@index([role, status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  deviceInfo  String?   // e.g. "iPhone 15 Pro - iOS 18", "Chrome on Windows"
+  ipAddress   String?
+  isRevoked   Boolean   @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model Address {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName          String
+  phone             String
+  streetLine1       String
+  streetLine2       String?
+  city              String
+  state             String?
+  postalCode        String?
+  country           String   @default("US")
+  isDefaultShipping Boolean  @default(false)
+  isDefaultBilling  Boolean  @default(false)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ==========================================
+// 3. CATALOG & 20k+ PRODUCTS (الكتالوج والمنتجات)
+// ==========================================
+
+model Category {
+  id          String     @id @default(uuid())
+  name        String
+  slug        String     @unique
+  description String?    @db.Text
+  imageUrl    String?
+  isActive    Boolean    @default(true)
+  order       Int        @default(0)
+
+  parentId    String?
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[] @relation("CategoryHierarchy")
+
+  products    Product[]
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([parentId])
+  @@index([slug])
+  @@index([isActive, order])
+  @@map("categories")
+}
+
+model Product {
+  id               String            @id @default(uuid())
+  title            String
+  slug             String            @unique
+  sku              String            @unique
+  description      String            @db.Text
+  shortDescription String?           @db.Text
+
+  // Financial & Pricing (Stored in Decimals for Precision)
+  price            Decimal           @db.Decimal(12, 2)
+  compareAtPrice   Decimal?          @db.Decimal(12, 2)
+  costPrice        Decimal?          @db.Decimal(12, 2)
+  currency         String            @default("USD")
+
+  // Real-time Inventory & High Concurrency Locking
+  stock            Int               @default(0)
+  reservedStock    Int               @default(0)
+  lowStockAlert    Int               @default(5)
+  trackQuantity    Boolean           @default(true)
+
+  status           ProductStatus     @default(ACTIVE)
+  isFeatured       Boolean           @default(false)
+
+  // Categorization & Industrial Filters
+  categoryId       String?
+  category         Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand            String?           // e.g. "CAT", "KOMATSU", "JOHN DEERE", "VOLVO", "KUBOTA"
+  equipmentType    String?           // e.g. "Excavator", "Wheel Loader", "Tractor", "Engine", "Bulldozer"
+  engineBrand      String?           // e.g. "CUMMINS", "ISUZU", "CAT", "DEUTZ", "PERKINS", "YANMAR"
+
+  // Media & Metadata
+  images           ProductImage[]
+  attributes       Json?             // e.g. { "color": ["Red", "Blue"], "size": ["M", "L"] }
+  tags             String[]          @default([])
+  weightKg         Decimal?          @db.Decimal(8, 3)
+
+  // Analytics & Sort Helpers
+  viewCount        Int               @default(0)
+  salesCount       Int               @default(0)
+
+  // Relational references
+  cartItems        CartItem[]
+  orderItems       OrderItem[]
+  stockReservations StockReservation[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Multi-column Indexes for lightning-fast queries with 20,000+ items
+  @@index([status, createdAt(sort: Desc)])
+  @@index([categoryId, status, price])
+  @@index([isFeatured, status])
+  @@index([sku])
+  @@index([slug])
+  @@index([salesCount(sort: Desc)])
+  @@index([brand])
+  @@index([equipmentType])
+  @@index([engineBrand])
+  @@map("products")
+}
+
+model ProductImage {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url        String
+  altText    String?
+  sortOrder  Int      @default(0)
+  isPrimary  Boolean  @default(false)
+
+  createdAt  DateTime @default(now())
+
+  @@index([productId, sortOrder])
+  @@map("product_images")
+}
+
+// ==========================================
+// 4. SHOPPING CART (السلة التسويقية للمستخدم والزائر)
+// ==========================================
+
+model Cart {
+  id         String     @id @default(uuid())
+  userId     String?    @unique
+  user       User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId  String?    @unique // Support for Guest Users
+  items      CartItem[]
+  expiresAt  DateTime?
+
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([sessionId])
+  @@map("carts")
+}
+
+model CartItem {
+  id         String   @id @default(uuid())
+  cartId     String
+  cart       Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity   Int      @default(1)
+  unitPrice  Decimal  @db.Decimal(12, 2)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@index([productId])
+  @@map("cart_items")
+}
+
+// ==========================================
+// 5. ORDERS & FINANCIAL ENGINE (الطلبات والمدفوعات)
+// ==========================================
+
+model Order {
+  id               String               @id @default(uuid())
+  orderNumber      String               @unique // E.g. ORD-20261009-87391
+  userId           String?
+  user             User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Order & Financial Lifecycle States
+  status           OrderStatus          @default(PENDING)
+  paymentStatus    PaymentStatus        @default(UNPAID)
+  currency         String               @default("USD")
+
+  // Accurate Monetary Calculations
+  subtotal         Decimal              @db.Decimal(12, 2)
+  taxAmount        Decimal              @default(0.00) @db.Decimal(12, 2)
+  shippingAmount   Decimal              @default(0.00) @db.Decimal(12, 2)
+  discountAmount   Decimal              @default(0.00) @db.Decimal(12, 2)
+  totalAmount      Decimal              @db.Decimal(12, 2)
+
+  // Immutable Snapshot of Shipping & Billing at Purchase Time
+  shippingAddress  Json
+  billingAddress   Json?
+
+  customerEmail    String
+  customerPhone    String?
+  notes            String?              @db.Text
+  trackingNumber   String?
+
+  items            OrderItem[]
+  payments         PaymentTransaction[]
+  reservations     StockReservation[]
+
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([userId])
+  @@index([orderNumber])
+  @@index([status, paymentStatus])
+  @@index([createdAt(sort: Desc)])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String   @id @default(uuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String?
+  product         Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  // Snapshots to protect historical records if product changes later
+  productTitle    String
+  productSku      String
+  productImage    String?
+  unitPrice       Decimal  @db.Decimal(12, 2)
+  quantity        Int
+  totalPrice      Decimal  @db.Decimal(12, 2)
+  selectedOptions Json?
+
+  createdAt       DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model PaymentTransaction {
+  id               String                   @id @default(uuid())
+  orderId          String
+  order            Order                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  provider         PaymentProvider
+  transactionId    String?                  // Gateway transaction reference (e.g. Stripe ch_xxx or PayPal capture_id)
+  idempotencyKey   String                   @unique // Mandatory to guarantee zero duplicate charges
+  status           PaymentTransactionStatus @default(PENDING)
+
+  amount           Decimal                  @db.Decimal(12, 2)
+  currency         String                   @default("USD")
+  paymentMethod    String?                  // e.g. "visa", "mastercard", "paypal_wallet"
+
+  errorMessage     String?                  @db.Text
+  rawResponse      Json?                    // Audit payload from webhook / gateway
+
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([orderId])
+  @@index([idempotencyKey])
+  @@index([transactionId])
+  @@index([provider, status])
+  @@map("payment_transactions")
+}
+
+model StockReservation {
+  id          String            @id @default(uuid())
+  orderId     String
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Int
+  status      ReservationStatus @default(RESERVED)
+  expiresAt   DateTime          // Automatically releases held stock if payment expires
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([status, expiresAt])
+  @@map("stock_reservations")
+}

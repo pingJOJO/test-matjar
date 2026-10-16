@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing & Coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Production Builds
+dist/
+build/
+.next/
+out/
+
+# Environment Files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Prisma Generated Clients
+backend/prisma/generated/
+
+# Raw scraped assets folder
+Aftermarket Parts, Spare Parts*/
