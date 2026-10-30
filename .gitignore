@@ -14,13 +14,23 @@ build/
 .next/
 out/
 
-# Environment Files
+# Environment Files & Secrets
 .env
+.env*
+*.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-*.env
+
+# API Credentials & Info Exports
+api_and_google_auth_info.txt
+*api*info*.txt
+*credentials*.txt
+*auth*info*.txt
+
+# TypeScript Build Info
+*.tsbuildinfo
 
 # System & IDE files
 .DS_Store

@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,6 +30,8 @@ import {
 @ApiTags('Payments')
 @Controller('payments')
 export class PaymentsController {
+  private readonly logger = new Logger('PaymentMonitor');
+
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('prepare-live-1usd')
@@ -38,7 +41,10 @@ export class PaymentsController {
     description: 'Initializes or retrieves the official $1.00 USD verification order',
   })
   async prepareLive1Usd() {
-    return this.paymentsService.prepareLive1UsdOrder();
+    this.logger.log('📥 [REQ 1/4] POST /payments/prepare-live-1usd -> Preparing order ORD-LIVE-1USD');
+    const res = await this.paymentsService.prepareLive1UsdOrder();
+    this.logger.log(`📤 [RES 1/4] Order Prepared: ${res.orderNumber} ($${res.amount} ${res.currency})`);
+    return res;
   }
 
   @Post('create-intent')
@@ -80,7 +86,17 @@ export class PaymentsController {
       );
     }
 
-    return this.paymentsService.createPaymentIntent(dto, effectiveKey);
+    this.logger.log(
+      `📥 [REQ 2/4] POST /payments/create-intent -> Order: ${dto.orderId}, Provider: ${dto.provider}, IdempotencyKey: ${effectiveKey}`,
+    );
+
+    const result = await this.paymentsService.createPaymentIntent(dto, effectiveKey);
+
+    this.logger.log(
+      `📤 [RES 2/4] ClientSecret Issued: ${result.clientSecret ? `${result.clientSecret.slice(0, 24)}...` : 'NONE'} | Amount: $${result.amount} ${result.currency}`,
+    );
+
+    return result;
   }
 
   @Post('confirm')
@@ -96,7 +112,17 @@ export class PaymentsController {
     description: 'Payment successfully settled',
   })
   async confirmPayment(@Body() dto: ConfirmPaymentDto) {
-    return this.paymentsService.confirmPayment(dto);
+    this.logger.log(
+      `📥 [REQ 4/4] POST /payments/confirm -> Order: ${dto.orderId}, Provider: ${dto.provider}, Tx: ${dto.transactionId}`,
+    );
+
+    const result = await this.paymentsService.confirmPayment(dto);
+
+    this.logger.log(
+      `📤 [RES 4/4] Payment Settled: Order ${result.orderNumber} is now ${result.paymentStatus} (Order Status: ${result.orderStatus})`,
+    );
+
+    return result;
   }
 
   @Post('webhook/stripe')
@@ -120,8 +146,13 @@ export class PaymentsController {
     @Headers('stripe-signature') signature: string,
     @Req() req: Request,
   ) {
+    this.logger.log(
+      `⚡ [WEBHOOK-IN] Stripe Webhook received! Signature: ${signature ? `${signature.slice(0, 25)}...` : 'MISSING'}`,
+    );
     const rawBody = (req as any).rawBody || Buffer.from(JSON.stringify(req.body || {}));
-    return this.paymentsService.processStripeWebhook(signature, rawBody);
+    const result = await this.paymentsService.processStripeWebhook(signature, rawBody);
+    this.logger.log(`⚡ [WEBHOOK-OUT] Stripe Webhook successfully processed! Result: ${JSON.stringify(result)}`);
+    return result;
   }
 
   @Post('webhook/paypal')
@@ -137,7 +168,10 @@ export class PaymentsController {
     description: 'Webhook processed',
   })
   async payPalWebhook(@Body() payload: any) {
-    return this.paymentsService.processPayPalWebhook(payload);
+    this.logger.log(`⚡ [WEBHOOK-IN] PayPal Webhook received: ${payload?.event_type}`);
+    const result = await this.paymentsService.processPayPalWebhook(payload);
+    this.logger.log(`⚡ [WEBHOOK-OUT] PayPal Webhook processed!`);
+    return result;
   }
 
   @Get('status/:orderId')
@@ -163,6 +197,7 @@ export class PaymentsController {
   async getPaymentStatus(
     @Param('orderId') orderId: string,
   ): Promise<PaymentStatusResponseDto> {
+    this.logger.log(`🔍 [QUERY] GET /payments/status/${orderId}`);
     return this.paymentsService.getPaymentStatus(orderId);
   }
 }

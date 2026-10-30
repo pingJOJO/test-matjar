@@ -63,8 +63,7 @@ export class AuthService {
       this.configService.get<string>('JWT_REFRESH_EXPIRATION') || '30d';
 
     this.googleClientId =
-      this.configService.get<string>('GOOGLE_CLIENT_ID') ||
-      '616697110221-s826h11pfu4nunm4j437lhu0iot49oqo.apps.googleusercontent.com';
+      this.configService.get<string>('GOOGLE_CLIENT_ID') || '';
     this.googleClient = new OAuth2Client(this.googleClientId);
   }
 

@@ -91,32 +91,34 @@ export class PaymentsService {
     this.inMemoryOrders.set(orderData.id, orderData);
     this.inMemoryOrders.set(orderData.orderNumber, orderData);
 
-    try {
-      await this.prisma.order.upsert({
-        where: { orderNumber: orderData.orderNumber },
-        update: {
-          totalAmount: new Prisma.Decimal(1.00),
-          currency: 'USD',
-          paymentStatus: PaymentStatus.UNPAID,
-          status: OrderStatus.PENDING,
-        },
-        create: {
-          id: orderData.id,
-          orderNumber: orderData.orderNumber,
-          status: OrderStatus.PENDING,
-          paymentStatus: PaymentStatus.UNPAID,
-          currency: 'USD',
-          subtotal: new Prisma.Decimal(1.00),
-          shippingAmount: new Prisma.Decimal(0.00),
-          taxAmount: new Prisma.Decimal(0.00),
-          totalAmount: new Prisma.Decimal(1.00),
-          customerEmail: orderData.customerEmail,
-          shippingAddress: orderData.shippingAddress,
-          notes: orderData.notes,
-        },
-      });
-    } catch {
-      // In-memory ledger is ready
+    if (this.prisma.isConnected) {
+      try {
+        await this.prisma.order.upsert({
+          where: { orderNumber: orderData.orderNumber },
+          update: {
+            totalAmount: new Prisma.Decimal(1.00),
+            currency: 'USD',
+            paymentStatus: PaymentStatus.UNPAID,
+            status: OrderStatus.PENDING,
+          },
+          create: {
+            id: orderData.id,
+            orderNumber: orderData.orderNumber,
+            status: OrderStatus.PENDING,
+            paymentStatus: PaymentStatus.UNPAID,
+            currency: 'USD',
+            subtotal: new Prisma.Decimal(1.00),
+            shippingAmount: new Prisma.Decimal(0.00),
+            taxAmount: new Prisma.Decimal(0.00),
+            totalAmount: new Prisma.Decimal(1.00),
+            customerEmail: orderData.customerEmail,
+            shippingAddress: orderData.shippingAddress,
+            notes: orderData.notes,
+          },
+        });
+      } catch {
+        // In-memory ledger is ready
+      }
     }
 
     return {
@@ -136,18 +138,20 @@ export class PaymentsService {
 
     // 1. Locate Order (Support both UUID and Order Number e.g. ORD-LIVE-1USD or in-memory)
     let order: any = null;
-    try {
-      order = await this.prisma.order.findFirst({
-        where: {
-          OR: [
-            { id: dto.orderId },
-            { orderNumber: dto.orderId },
-          ],
-        },
-        include: { items: true },
-      });
-    } catch {
-      // In-memory fallback
+    if (this.prisma.isConnected) {
+      try {
+        order = await this.prisma.order.findFirst({
+          where: {
+            OR: [
+              { id: dto.orderId },
+              { orderNumber: dto.orderId },
+            ],
+          },
+          include: { items: true },
+        });
+      } catch {
+        // In-memory fallback
+      }
     }
 
     if (!order) {
@@ -169,11 +173,15 @@ export class PaymentsService {
 
     // 2. Check for duplicate idempotent charge intent
     let existingTransaction: any = null;
-    try {
-      existingTransaction = await this.prisma.paymentTransaction.findUnique({
-        where: { idempotencyKey },
-      });
-    } catch {
+    if (this.prisma.isConnected) {
+      try {
+        existingTransaction = await this.prisma.paymentTransaction.findUnique({
+          where: { idempotencyKey },
+        });
+      } catch {
+        existingTransaction = this.inMemoryTransactions.get(idempotencyKey);
+      }
+    } else {
       existingTransaction = this.inMemoryTransactions.get(idempotencyKey);
     }
 
@@ -207,7 +215,7 @@ export class PaymentsService {
           {
             amount: amountInCents,
             currency: (order.currency || 'usd').toLowerCase(),
-            payment_method_types: ['card'],
+            automatic_payment_methods: { enabled: true },
             metadata: {
               orderId: order.orderNumber === 'TEST-A2Z-59' || dto.orderId === 'TEST-A2Z-59' ? 'TEST-A2Z-59' : order.id,
               orderNumber: order.orderNumber,
@@ -238,22 +246,24 @@ export class PaymentsService {
         rawResponse: { clientSecret, transactionId },
       });
 
-      try {
-        await this.prisma.paymentTransaction.create({
-          data: {
-            orderId: order.id,
-            provider: PaymentProvider.STRIPE,
-            transactionId,
-            idempotencyKey,
-            status: PaymentTransactionStatus.PENDING,
-            amount: order.totalAmount,
-            currency: order.currency,
-            paymentMethod: 'card_visa_mastercard',
-            rawResponse: { clientSecret, transactionId },
-          },
-        });
-      } catch {
-        // In-memory ledger holds the transaction
+      if (this.prisma.isConnected) {
+        try {
+          await this.prisma.paymentTransaction.create({
+            data: {
+              orderId: order.id,
+              provider: PaymentProvider.STRIPE,
+              transactionId,
+              idempotencyKey,
+              status: PaymentTransactionStatus.PENDING,
+              amount: order.totalAmount,
+              currency: order.currency,
+              paymentMethod: 'card_visa_mastercard',
+              rawResponse: { clientSecret, transactionId },
+            },
+          });
+        } catch {
+          // In-memory ledger holds the transaction
+        }
       }
 
       return {
@@ -326,19 +336,23 @@ export class PaymentsService {
         approveUrl = `https://www.sandbox.paypal.com/checkoutnow?token=${paypalOrderId}`;
       }
 
-      await this.prisma.paymentTransaction.create({
-        data: {
-          orderId: order.id,
-          provider: PaymentProvider.PAYPAL,
-          transactionId: paypalOrderId,
-          idempotencyKey,
-          status: PaymentTransactionStatus.PENDING,
-          amount: order.totalAmount,
-          currency: order.currency,
-          paymentMethod: 'paypal_wallet',
-          rawResponse: { approveUrl, paypalOrderId },
-        },
-      });
+      if (this.prisma.isConnected) {
+        try {
+          await this.prisma.paymentTransaction.create({
+            data: {
+              orderId: order.id,
+              provider: PaymentProvider.PAYPAL,
+              transactionId: paypalOrderId,
+              idempotencyKey,
+              status: PaymentTransactionStatus.PENDING,
+              amount: order.totalAmount,
+              currency: order.currency,
+              paymentMethod: 'paypal_wallet',
+              rawResponse: { approveUrl, paypalOrderId },
+            },
+          });
+        } catch {}
+      }
 
       return {
         orderId: order.id,
@@ -361,16 +375,18 @@ export class PaymentsService {
   async confirmPayment(dto: ConfirmPaymentDto) {
     // 1. Locate Order and ensure it exists and is eligible for payment
     let order: any = null;
-    try {
-      order = await this.prisma.order.findFirst({
-        where: {
-          OR: [
-            { id: dto.orderId },
-            { orderNumber: dto.orderId },
-          ],
-        },
-      });
-    } catch {}
+    if (this.prisma.isConnected) {
+      try {
+        order = await this.prisma.order.findFirst({
+          where: {
+            OR: [
+              { id: dto.orderId },
+              { orderNumber: dto.orderId },
+            ],
+          },
+        });
+      } catch {}
+    }
 
     if (!order) {
       order = this.inMemoryOrders.get(dto.orderId);
@@ -386,17 +402,19 @@ export class PaymentsService {
 
     // 2. Validate corresponding pending transaction
     let pendingTx: any = null;
-    try {
-      pendingTx = await this.prisma.paymentTransaction.findFirst({
-        where: {
-          orderId: order.id,
-          OR: [
-            { idempotencyKey: dto.idempotencyKey },
-            { transactionId: dto.transactionId },
-          ],
-        },
-      });
-    } catch {}
+    if (this.prisma.isConnected) {
+      try {
+        pendingTx = await this.prisma.paymentTransaction.findFirst({
+          where: {
+            orderId: order.id,
+            OR: [
+              { idempotencyKey: dto.idempotencyKey },
+              { transactionId: dto.transactionId },
+            ],
+          },
+        });
+      } catch {}
+    }
 
     if (!pendingTx) {
       pendingTx = this.inMemoryTransactions.get(dto.idempotencyKey);
@@ -508,17 +526,19 @@ export class PaymentsService {
     rawResponse?: any,
   ) {
     let order: any = null;
-    try {
-      order = await this.prisma.order.findFirst({
-        where: {
-          OR: [
-            { id: orderId },
-            { orderNumber: orderId },
-          ],
-        },
-        include: { items: true },
-      });
-    } catch {}
+    if (this.prisma.isConnected) {
+      try {
+        order = await this.prisma.order.findFirst({
+          where: {
+            OR: [
+              { id: orderId },
+              { orderNumber: orderId },
+            ],
+          },
+          include: { items: true },
+        });
+      } catch {}
+    }
 
     if (!order) {
       order = this.inMemoryOrders.get(orderId);
@@ -551,58 +571,60 @@ export class PaymentsService {
     });
 
     // 2. Atomic transaction for payment settlement in DB if available
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        // Mark Order as PAID and PROCESSING
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            paymentStatus: PaymentStatus.PAID,
-            status: OrderStatus.PROCESSING,
-          },
-        });
+    if (this.prisma.isConnected) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          // Mark Order as PAID and PROCESSING
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              paymentStatus: PaymentStatus.PAID,
+              status: OrderStatus.PROCESSING,
+            },
+          });
 
-        // Commit stock
-        for (const item of (order.items || [])) {
-          if (item.productId) {
-            await tx.$executeRaw`
-              UPDATE "products"
-              SET "reservedStock" = GREATEST(0, "reservedStock" - ${item.quantity}),
-                  "salesCount" = "salesCount" + ${item.quantity},
-                  "updatedAt" = NOW()
-              WHERE "id" = ${item.productId};
-            `;
+          // Commit stock
+          for (const item of (order.items || [])) {
+            if (item.productId) {
+              await tx.$executeRaw`
+                UPDATE "products"
+                SET "reservedStock" = GREATEST(0, "reservedStock" - ${item.quantity}),
+                    "salesCount" = "salesCount" + ${item.quantity},
+                    "updatedAt" = NOW()
+                WHERE "id" = ${item.productId};
+              `;
+            }
           }
-        }
 
-        // Mark StockReservations as COMMITTED
-        await tx.stockReservation.updateMany({
-          where: { orderId: order.id, status: ReservationStatus.RESERVED },
-          data: { status: ReservationStatus.COMMITTED },
-        });
+          // Mark StockReservations as COMMITTED
+          await tx.stockReservation.updateMany({
+            where: { orderId: order.id, status: ReservationStatus.RESERVED },
+            data: { status: ReservationStatus.COMMITTED },
+          });
 
-        // Upsert transaction record
-        await tx.paymentTransaction.upsert({
-          where: { idempotencyKey },
-          update: {
-            status: PaymentTransactionStatus.SUCCESS,
-            transactionId,
-            rawResponse: rawResponse ? (rawResponse as Prisma.InputJsonValue) : undefined,
-          },
-          create: {
-            orderId: order.id,
-            provider,
-            transactionId,
-            idempotencyKey,
-            status: PaymentTransactionStatus.SUCCESS,
-            amount: order.totalAmount,
-            currency: order.currency,
-            rawResponse: rawResponse ? (rawResponse as Prisma.InputJsonValue) : undefined,
-          },
+          // Upsert transaction record
+          await tx.paymentTransaction.upsert({
+            where: { idempotencyKey },
+            update: {
+              status: PaymentTransactionStatus.SUCCESS,
+              transactionId,
+              rawResponse: rawResponse ? (rawResponse as Prisma.InputJsonValue) : undefined,
+            },
+            create: {
+              orderId: order.id,
+              provider,
+              transactionId,
+              idempotencyKey,
+              status: PaymentTransactionStatus.SUCCESS,
+              amount: order.totalAmount,
+              currency: order.currency,
+              rawResponse: rawResponse ? (rawResponse as Prisma.InputJsonValue) : undefined,
+            },
+          });
         });
-      });
-    } catch (e: any) {
-      this.logger.log(`Database transaction deferred (in-memory ledger updated): ${e.message}`);
+      } catch (e: any) {
+        this.logger.log(`Database transaction deferred (in-memory ledger updated): ${e.message}`);
+      }
     }
 
     this.logger.log(
@@ -827,21 +849,23 @@ export class PaymentsService {
    */
   async getPaymentStatus(orderId: string) {
     let order: any = null;
-    try {
-      const isUuid =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
+    if (this.prisma.isConnected) {
+      try {
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
 
-      order = await this.prisma.order.findUnique({
-        where: isUuid ? { id: orderId } : { orderNumber: orderId },
-        include: {
-          payments: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
+        order = await this.prisma.order.findUnique({
+          where: isUuid ? { id: orderId } : { orderNumber: orderId },
+          include: {
+            payments: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
           },
-        },
-      });
-    } catch {
-      // In-memory fallback
+        });
+      } catch {
+        // In-memory fallback
+      }
     }
 
     if (!order) {

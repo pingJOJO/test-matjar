@@ -32,9 +32,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatWeight } from '@/lib/utils';
 
-const stripePublishableKey =
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
-  'pk_live_51UOpHiBF7CiYZCwvAEjbHII5QFA3zYoMhlQfxROpJ2qyWdwlqjFyAvJYp05taaler8uj1pZSPr9cIkM2HTuTgxpv00IMrUNZJD';
+const stripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
 
 const isLiveMode = stripePublishableKey.startsWith('pk_live_');
 const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;

@@ -24,11 +24,9 @@ import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
-const stripePublishableKey =
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
-  'pk_live_51UOpHiBF7CiYZCwvAEjbHII5QFA3zYoMhlQfxROpJ2qyWdwlqjFyAvJYp05taaler8uj1pZSPr9cIkM2HTuTgxpv00IMrUNZJD';
+const stripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
 
-const stripePromise = loadStripe(stripePublishableKey);
+const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;
 
 const CARD_ELEMENT_OPTIONS = {
   style: {
